@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String   @id @default(cuid())
+  email      String   @unique
+  name       String
+  password   String
+  studentId  String?
+  department String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  sessions   Session[]
+  classes    ClassEvent[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+model ClassEvent {
+  id        String   @id @default(cuid())
+  userId    String
+
+  subject   String
+  code      String?
+  type      String?  // Lab | Lecture | etc
+  room      String?
+  nodeId    String?  // map node id like "lab_1"
+
+  day       Int      // 0=Sun ... 6=Sat
+  startMins Int      // minutes since midnight
+  endMins   Int
+
+  source    String?  // "ics" | "csv" | "manual"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, day])
+}
+
