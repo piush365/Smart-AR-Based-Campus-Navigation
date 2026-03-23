@@ -1,17 +1,21 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Home, Map, QrCode, Calendar, User } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
-const NAV_ITEMS = [
-  { name: 'Home',     path: '/',         icon: Home },
-  { name: 'Schedule', path: '/schedule', icon: Calendar },
-  { name: 'Scan',     path: '/scan',     icon: QrCode,  accent: true },
-  { name: 'Map',      path: '/map',      icon: Map },
-  { name: 'Profile',  path: '/profile',  icon: User },
+const ALL_NAV_ITEMS = [
+  { name: 'Home',     path: '/',         icon: Home,     roles: ['student', 'visitor'] },
+  { name: 'Schedule', path: '/schedule', icon: Calendar, roles: ['student'] },
+  { name: 'Scan',     path: '/scan',     icon: QrCode,   accent: true, roles: ['student', 'visitor'] },
+  { name: 'Map',      path: '/map',      icon: Map,      roles: ['student', 'visitor'] },
+  { name: 'Profile',  path: '/profile',  icon: User,     roles: ['student', 'visitor'] },
 ];
 
 const BottomNav = () => {
   const { pathname } = useLocation();
+  const { user } = useAuth();
+  const role = user?.role || 'student';
+  const NAV_ITEMS = ALL_NAV_ITEMS.filter(item => item.roles.includes(role));
 
   return (
     <nav style={{

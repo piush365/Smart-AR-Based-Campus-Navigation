@@ -87,7 +87,10 @@ const Home = ({ currentLocation, setDestination }) => {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: 14, fontWeight: 700, color: '#2563eb', flexShrink: 0,
           }}>
-            {user?.avatar || '?'}
+          {user?.name
+              ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+              : '?'
+            }
           </div>
         </div>
 

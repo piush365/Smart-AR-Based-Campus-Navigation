@@ -1,223 +1,389 @@
-import React, { useState, useEffect, useRef } from 'react';
+/**
+ * src/components/QRScanner.jsx
+ *
+ * Real QR code scanner using:
+ *   - navigator.mediaDevices.getUserMedia  (camera access)
+ *   - jsQR                                (decode QR from canvas pixels)
+ *
+ * Expected QR payload format (JSON string):
+ *   { "nodeId": "computer-lab", "label": "Computer Lab" }
+ *
+ * On successful scan, sets currentLocation in context and navigates to MapScreen.
+ *
+ * Install jsQR:  npm install jsqr
+ * Import in this file is a named import: import jsQR from 'jsqr'
+ */
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle, MapPin, ChevronDown, ChevronUp } from 'lucide-react';
+import jsQR from 'jsqr';
 
-const SCAN_LOCATIONS = [
-  { id: 'gate',    name: 'Main Gate',       emoji: '🚪', desc: 'East campus entrance' },
-  { id: 'lab_1',  name: 'Computer Lab',    emoji: '🖥️', desc: 'Block B' },
-  { id: 'lab_2',  name: 'Science Lab',     emoji: '🔬', desc: 'Physics & Chem' },
-  { id: 'lab_3',  name: 'Electronics Lab', emoji: '⚡', desc: 'Block C' },
-  { id: 'lh_a',   name: 'Lecture Hall A',  emoji: '📚', desc: 'Main auditorium wing' },
-  { id: 'lh_b',   name: 'Lecture Hall B',  emoji: '📖', desc: 'East lecture wing' },
-  { id: 'library',name: 'Library',         emoji: '📕', desc: 'Central, 3 floors' },
-  { id: 'canteen',name: 'Canteen',         emoji: '🍽️', desc: 'Block D food court' },
-  { id: 'office', name: 'Admin Office',    emoji: '🏢', desc: 'Administrative block' },
-];
+// Map of nodeId → human-readable label (keep in sync with MapScreen nodes)
+const NODE_LABELS = {
+  'main-gate':        'Main Gate',
+  'computer-lab':     'Computer Lab',
+  'science-lab':      'Science Lab',
+  'electronics-lab':  'Electronics Lab',
+  'lecture-hall-a':   'Lecture Hall A',
+  'lecture-hall-b':   'Lecture Hall B',
+  'library':          'Library',
+  'canteen':          'Canteen',
+  'admin-office':     'Admin Office',
+  'classroom-3':      'Classroom 3',
+};
 
-const QRScanner = ({ setCurrentLocation }) => {
+export default function QRScanner({ setCurrentLocation }) {
   const navigate = useNavigate();
-  const [state, setState] = useState('idle'); // idle | scanning | success
-  const [scannedLoc, setScannedLoc] = useState(null);
-  const [expanded, setExpanded] = useState(false);
-  const [scanProgress, setScanProgress] = useState(0);
-  const scanTimer = useRef(null);
-  const progressTimer = useRef(null);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const rafRef = useRef(null);
 
-  useEffect(() => () => {
-    clearTimeout(scanTimer.current);
-    clearInterval(progressTimer.current);
-  }, []);
+  const [status, setStatus] = useState('initializing'); // initializing | scanning | found | error
+  const [errorMsg, setErrorMsg] = useState('');
+  const [scannedNode, setScannedNode] = useState(null);
+  const [torchOn, setTorchOn] = useState(false);
+  const [hasTorch, setHasTorch] = useState(false);
 
-  const simulateScan = (loc) => {
-    if (state === 'scanning') return;
-    setState('scanning');
-    setExpanded(false);
-    setScanProgress(0);
+  // ── Start camera ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
 
-    // Animate progress bar over 1.2s
-    let progress = 0;
-    progressTimer.current = setInterval(() => {
-      progress += 5;
-      setScanProgress(Math.min(progress, 100));
-      if (progress >= 100) clearInterval(progressTimer.current);
-    }, 60);
+    async function startCamera() {
+      try {
+        const constraints = {
+          video: {
+            facingMode: { ideal: 'environment' }, // rear camera preferred
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+        };
 
-    scanTimer.current = setTimeout(() => {
-      setScannedLoc(loc);
-      setCurrentLocation(loc.id);
-      setState('success');
-      // Navigate home after showing success
-      setTimeout(() => navigate('/'), 2000);
-    }, 1300);
-  };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
 
-  const reset = () => {
-    setState('idle');
-    setScannedLoc(null);
-    setScanProgress(0);
-    clearTimeout(scanTimer.current);
-    clearInterval(progressTimer.current);
-  };
+        streamRef.current = stream;
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
 
+        // Check torch support
+        const track = stream.getVideoTracks()[0];
+        const caps = track.getCapabilities?.();
+        setHasTorch(!!caps?.torch);
+
+        setStatus('scanning');
+        scanLoop();
+      } catch (err) {
+        if (cancelled) return;
+        if (err.name === 'NotAllowedError') {
+          setErrorMsg('Camera permission denied. Allow camera access in your browser settings.');
+        } else if (err.name === 'NotFoundError') {
+          setErrorMsg('No camera found on this device.');
+        } else {
+          setErrorMsg(`Camera error: ${err.message}`);
+        }
+        setStatus('error');
+      }
+    }
+
+    startCamera();
+
+    return () => {
+      cancelled = true;
+      stopCamera();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function stopCamera() {
+    cancelAnimationFrame(rafRef.current);
+    streamRef.current?.getTracks().forEach(t => t.stop());
+  }
+
+  // ── QR scan loop ───────────────────────────────────────────────────────────
+  const scanLoop = useCallback(() => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(video, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'dontInvert',
+      });
+
+      if (code) {
+        handleScan(code.data);
+        return; // stop the loop
+      }
+    }
+
+    rafRef.current = requestAnimationFrame(scanLoop);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Handle a decoded QR payload ────────────────────────────────────────────
+  function handleScan(raw) {
+    cancelAnimationFrame(rafRef.current);
+
+    try {
+      const payload = JSON.parse(raw);
+      const nodeId = payload.nodeId;
+
+      if (!nodeId || !NODE_LABELS[nodeId]) {
+        // Not a campus QR — keep scanning
+        setStatus('scanning');
+        rafRef.current = requestAnimationFrame(scanLoop);
+        return;
+      }
+
+      const label = payload.label || NODE_LABELS[nodeId];
+      setScannedNode({ nodeId, label });
+      setStatus('found');
+
+      // Vibrate on success if supported
+      if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+
+      // Update location in parent context
+      if (setCurrentLocation) setCurrentLocation(nodeId);
+
+      // Navigate to map after a short delay so user sees the success state
+      setTimeout(() => {
+        stopCamera();
+        navigate('/map', { state: { from: nodeId } });
+      }, 1500);
+    } catch {
+      // Not JSON — keep scanning
+      rafRef.current = requestAnimationFrame(scanLoop);
+    }
+  }
+
+  // ── Torch toggle ───────────────────────────────────────────────────────────
+  async function toggleTorch() {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track) return;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: !torchOn }] });
+      setTorchOn(!torchOn);
+    } catch {
+      // Torch not supported in this browser — hide the button
+      setHasTorch(false);
+    }
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div style={{ background: 'var(--bg)', minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div style={styles.container}>
+      {/* Video element — always present so the ref is valid */}
+      <video
+        ref={videoRef}
+        playsInline
+        muted
+        style={{ ...styles.video, display: status === 'error' ? 'none' : 'block' }}
+      />
+      <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-      {/* Header */}
-      <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '18px 20px' }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
-          QR Scanner
-        </h2>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-3)' }}>
-          Scan a campus QR code to set your location
-        </p>
-      </div>
-
-      <div style={{ flex: 1, padding: '28px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }}>
-
-        {/* Viewfinder */}
-        <div style={{
-          width: 220, height: 220, position: 'relative',
-          borderRadius: 20, overflow: 'hidden',
-          background: state === 'success' ? '#f0fdf4' : state === 'scanning' ? '#eff6ff' : 'var(--surface-2)',
-          border: `2px solid ${state === 'success' ? '#86efac' : state === 'scanning' ? '#93c5fd' : 'var(--border)'}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          transition: 'all 0.35s ease',
-        }}>
-          {/* Corner brackets */}
-          {[
-            { top:10,  left:10,  borderTop:'2.5px solid', borderLeft:'2.5px solid',  borderTopLeftRadius: 8 },
-            { top:10,  right:10, borderTop:'2.5px solid', borderRight:'2.5px solid', borderTopRightRadius: 8 },
-            { bottom:10, left:10,  borderBottom:'2.5px solid', borderLeft:'2.5px solid',  borderBottomLeftRadius: 8 },
-            { bottom:10, right:10, borderBottom:'2.5px solid', borderRight:'2.5px solid', borderBottomRightRadius: 8 },
-          ].map((style, i) => (
-            <div key={i} style={{
-              position:'absolute', width:20, height:20,
-              borderColor: state === 'success' ? '#22c55e' : '#2563eb',
-              ...style,
-            }} />
-          ))}
-
-          {/* Scan line animation */}
-          {state === 'scanning' && (
-            <div style={{
-              position:'absolute', left:16, right:16, height:2,
-              background: 'linear-gradient(90deg, transparent, #2563eb, transparent)',
-              animation: 'scanLine 1s linear infinite',
-              top: '50%',
-            }} />
-          )}
-
-          {state === 'success' ? (
-            <div className="scale-in" style={{ textAlign:'center' }}>
-              <CheckCircle size={52} color="#22c55e" />
-              <p style={{ margin:'8px 0 0', fontSize:13, fontWeight:700, color:'#16a34a' }}>
-                {scannedLoc?.name}
-              </p>
-              <p style={{ margin:'2px 0 0', fontSize:12, color:'var(--text-3)' }}>Location set!</p>
-            </div>
-          ) : state === 'scanning' ? (
-            <div style={{ textAlign:'center' }}>
-              <div style={{
-                width:40, height:40, borderRadius:'50%',
-                border:'3px solid #bfdbfe', borderTop:'3px solid #2563eb',
-                animation:'spin 0.7s linear infinite',
-                marginBottom:10,
-              }} />
-              <p style={{ margin:0, fontSize:13, fontWeight:600, color:'var(--text-2)' }}>Scanning…</p>
-            </div>
-          ) : (
-            <div style={{ textAlign:'center', padding:16 }}>
-              <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.5">
-                <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
-                <rect x="3" y="14" width="7" height="7" rx="1"/>
-                <path d="M14 14h1v1h-1z M16 14h1v1h-1z M14 16h1v1h-1z M16 16h1v1h-1z M18 14h3v3h-3z M14 18h3v3h-3z M18 18h1v3h-1z M21 18h1v1h-1z"/>
-              </svg>
-              <p style={{ margin:'10px 0 0', fontSize:12, color:'var(--text-4)' }}>Camera viewfinder</p>
-            </div>
+      {/* Overlay */}
+      <div style={styles.overlay}>
+        {/* Header */}
+        <div style={styles.header}>
+          <button onClick={() => { stopCamera(); navigate(-1); }} style={styles.backBtn}>←</button>
+          <span style={styles.headerTitle}>Scan Location QR</span>
+          {hasTorch && (
+            <button onClick={toggleTorch} style={styles.torchBtn}>
+              {torchOn ? '🔦' : '💡'}
+            </button>
           )}
         </div>
 
-        {/* Progress bar (visible while scanning) */}
-        {state === 'scanning' && (
-          <div style={{ width:'100%', maxWidth:220, height:4, background:'var(--border)', borderRadius:2, overflow:'hidden' }}>
+        {/* Viewfinder */}
+        {status !== 'error' && (
+          <div style={styles.viewfinderWrap}>
             <div style={{
-              height:'100%', background:'#2563eb', borderRadius:2,
-              width:`${scanProgress}%`, transition:'width 0.06s linear',
-            }} />
+              ...styles.viewfinder,
+              borderColor: status === 'found' ? '#4caf50' : 'rgba(255,255,255,0.8)',
+            }}>
+              {/* Corner brackets */}
+              {['tl','tr','bl','br'].map(c => (
+                <span key={c} style={{ ...styles.corner, ...cornerPos[c] }} />
+              ))}
+            </div>
           </div>
         )}
 
-        {/* Instructions */}
-        {state === 'idle' && (
-          <p style={{ textAlign:'center', fontSize:14, color:'var(--text-3)', margin:0, maxWidth:260, lineHeight:1.5 }}>
-            Point your camera at any campus QR code to instantly set your current location.
-          </p>
-        )}
-
-        {/* Success CTA */}
-        {state === 'success' && (
-          <div className="alert alert-success fade-in" style={{ width:'100%', maxWidth:340 }}>
-            <MapPin size={15} style={{ flexShrink:0 }} />
-            <span>Location set to <strong>{scannedLoc?.name}</strong>. Redirecting to home…</span>
-          </div>
-        )}
-
-        {/* Simulate panel */}
-        {state === 'idle' && (
-          <div className="card" style={{ width:'100%', maxWidth:380, overflow:'hidden' }}>
-            <button
-              onClick={() => setExpanded(v => !v)}
-              style={{
-                width:'100%', padding:'14px 16px', background:'none', border:'none',
-                display:'flex', justifyContent:'space-between', alignItems:'center', cursor:'pointer',
-              }}
-            >
-              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                <span className="badge badge-yellow">DEV</span>
-                <span style={{ fontSize:14, fontWeight:600, color:'var(--text-primary)' }}>
-                  Simulate QR Scan
-                </span>
-              </div>
-              {expanded ? <ChevronUp size={16} color="var(--text-4)" /> : <ChevronDown size={16} color="var(--text-4)" />}
-            </button>
-
-            {expanded && (
-              <div className="fade-in" style={{ borderTop:'1px solid var(--border)' }}>
-                {SCAN_LOCATIONS.map((loc, i) => (
-                  <button
-                    key={loc.id}
-                    onClick={() => simulateScan(loc)}
-                    style={{
-                      width:'100%', padding:'12px 16px', background:'none', border:'none',
-                      borderBottom:'1px solid var(--border)', cursor:'pointer',
-                      display:'flex', alignItems:'center', gap:12, textAlign:'left',
-                      transition:'background 0.1s',
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background='var(--surface-2)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background='none'; }}
-                  >
-                    <span style={{ fontSize:22 }}>{loc.emoji}</span>
-                    <div>
-                      <p style={{ margin:0, fontSize:14, fontWeight:600, color:'var(--text-primary)' }}>{loc.name}</p>
-                      <p style={{ margin:0, fontSize:12, color:'var(--text-3)' }}>{loc.desc}</p>
-                    </div>
-                    <MapPin size={14} color="var(--text-4)" style={{ marginLeft:'auto', flexShrink:0 }} />
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Reset button if stuck on success */}
-        {state === 'success' && (
-          <button className="btn btn-ghost" onClick={reset} style={{ marginTop:-8 }}>
-            Scan another
-          </button>
-        )}
+        {/* Status messages */}
+        <div style={styles.statusArea}>
+          {status === 'initializing' && (
+            <StatusPill color="#1a73e8">Starting camera…</StatusPill>
+          )}
+          {status === 'scanning' && (
+            <StatusPill color="rgba(0,0,0,0.55)">Point at a campus QR code</StatusPill>
+          )}
+          {status === 'found' && scannedNode && (
+            <div style={styles.foundCard}>
+              <div style={styles.checkmark}>✓</div>
+              <p style={styles.foundLabel}>{scannedNode.label}</p>
+              <p style={styles.foundSub}>Location set — opening map…</p>
+            </div>
+          )}
+          {status === 'error' && (
+            <div style={styles.errorCard}>
+              <p style={styles.errorText}>{errorMsg}</p>
+              <button onClick={() => window.location.reload()} style={styles.retryBtn}>
+                Retry
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
+}
+
+function StatusPill({ color, children }) {
+  return (
+    <div style={{
+      background: color,
+      color: '#fff',
+      padding: '8px 18px',
+      borderRadius: '20px',
+      fontSize: '14px',
+      fontWeight: '500',
+    }}>
+      {children}
+    </div>
+  );
+}
+
+// ── Styles ─────────────────────────────────────────────────────────────────
+const styles = {
+  container: {
+    position: 'relative',
+    width: '100%',
+    height: '100dvh',
+    background: '#000',
+    overflow: 'hidden',
+  },
+  video: {
+    position: 'absolute',
+    inset: 0,
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+  },
+  overlay: {
+    position: 'absolute',
+    inset: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+  },
+  header: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '16px 20px',
+    paddingTop: 'calc(16px + env(safe-area-inset-top))',
+    background: 'linear-gradient(to bottom, rgba(0,0,0,0.6), transparent)',
+  },
+  headerTitle: {
+    color: '#fff',
+    fontSize: '16px',
+    fontWeight: '600',
+  },
+  backBtn: {
+    background: 'rgba(255,255,255,0.15)',
+    border: 'none',
+    color: '#fff',
+    padding: '8px 14px',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '16px',
+  },
+  torchBtn: {
+    background: 'rgba(255,255,255,0.15)',
+    border: 'none',
+    color: '#fff',
+    padding: '8px 12px',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '18px',
+  },
+  viewfinderWrap: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewfinder: {
+    width: '240px',
+    height: '240px',
+    border: '2px solid rgba(255,255,255,0.8)',
+    borderRadius: '16px',
+    position: 'relative',
+    transition: 'border-color 0.3s',
+  },
+  corner: {
+    position: 'absolute',
+    width: '20px',
+    height: '20px',
+    borderColor: '#fff',
+    borderStyle: 'solid',
+    borderWidth: '0',
+  },
+  statusArea: {
+    paddingBottom: 'calc(100px + env(safe-area-inset-bottom))',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '12px',
+  },
+  foundCard: {
+    background: 'rgba(0,0,0,0.7)',
+    borderRadius: '16px',
+    padding: '24px 32px',
+    textAlign: 'center',
+    color: '#fff',
+  },
+  checkmark: {
+    width: '48px',
+    height: '48px',
+    borderRadius: '50%',
+    background: '#4caf50',
+    color: '#fff',
+    fontSize: '24px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    margin: '0 auto 12px',
+  },
+  foundLabel: { fontSize: '18px', fontWeight: '700', margin: '0 0 4px' },
+  foundSub: { fontSize: '13px', color: 'rgba(255,255,255,0.7)', margin: 0 },
+  errorCard: {
+    background: 'rgba(255,255,255,0.9)',
+    borderRadius: '16px',
+    padding: '24px',
+    textAlign: 'center',
+    margin: '0 24px',
+  },
+  errorText: { color: '#333', fontSize: '14px', marginBottom: '16px' },
+  retryBtn: {
+    background: '#1a73e8',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '8px',
+    padding: '10px 24px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: '600',
+  },
 };
 
-export default QRScanner;
+const cornerPos = {
+  tl: { top: '-2px', left: '-2px', borderTopWidth: '3px', borderLeftWidth: '3px', borderTopLeftRadius: '12px' },
+  tr: { top: '-2px', right: '-2px', borderTopWidth: '3px', borderRightWidth: '3px', borderTopRightRadius: '12px' },
+  bl: { bottom: '-2px', left: '-2px', borderBottomWidth: '3px', borderLeftWidth: '3px', borderBottomLeftRadius: '12px' },
+  br: { bottom: '-2px', right: '-2px', borderBottomWidth: '3px', borderRightWidth: '3px', borderBottomRightRadius: '12px' },
+};

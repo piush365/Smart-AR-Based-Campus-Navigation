@@ -46,12 +46,12 @@ const Register = () => {
     if (!form.studentId.trim()) { setError('Please enter your student ID.'); return; }
     if (!form.department) { setError('Please select your department.'); return; }
     setLoading(true);
-    await new Promise(r => setTimeout(r, 600));
-    const result = register(form);
-    if (result.success) {
+    try {
+      await register({ ...form, role: 'student' });
       navigate('/', { replace: true });
-    } else {
-      setError(result.error);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Registration failed. Please try again.');
+    } finally {
       setLoading(false);
     }
   };

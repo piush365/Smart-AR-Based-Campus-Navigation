@@ -1,99 +1,131 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+/**
+ * src/context/AuthContext.jsx
+ *
+ * Production auth context backed by the Express/Prisma backend.
+ *
+ * Supports:
+ *   - Google OAuth (redirects to backend /auth/google)
+ *   - Email + password (POST /auth/login, /auth/register)
+ *   - JWT access + refresh tokens (stored in localStorage)
+ *   - Auto-bootstrap on page reload from stored tokens
+ *
+ * The Google OAuth flow:
+ *   1. User clicks "Sign in with Google" → navigated to /auth/google on backend.
+ *   2. Backend redirects to Google consent screen.
+ *   3. Google redirects to /auth/google/callback on backend.
+ *   4. Backend issues JWTs and redirects to /auth/callback on frontend with
+ *      tokens in the URL hash (#access=...&refresh=...).
+ *   5. <OAuthCallback /> component reads the hash, stores tokens, redirects to /.
+ */
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import api from '../api.js';
 
 const AuthContext = createContext(null);
 
-// Mock user database stored in localStorage
-const USERS_KEY = 'campusAR_users';
-const SESSION_KEY = 'campusAR_session';
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
 
-const getUsers = () => {
-  try {
-    return JSON.parse(localStorage.getItem(USERS_KEY)) || [];
-  } catch {
-    return [];
-  }
-};
-
-export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('user')); } catch { return null; }
+  });
   const [loading, setLoading] = useState(true);
 
-  // Restore session on mount
+  // On mount — verify stored token is still valid
   useEffect(() => {
-    try {
-      const session = JSON.parse(localStorage.getItem(SESSION_KEY));
-      if (session) setUser(session);
-    } catch {
-      // ignore
-    }
-    setLoading(false);
+    const token = localStorage.getItem('accessToken');
+    if (!token) { setLoading(false); return; }
+
+    api.get('/auth/me')
+      .then(({ data }) => setUser(data))
+      .catch(() => {
+        // Token invalid even after refresh attempt — clear everything
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
+        localStorage.removeItem('user');
+        setUser(null);
+      })
+      .finally(() => setLoading(false));
   }, []);
 
-  const register = ({ name, email, password, studentId, department }) => {
-    const users = getUsers();
-    if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
-      return { success: false, error: 'An account with this email already exists.' };
-    }
-    const newUser = {
-      id: Date.now().toString(),
-      name,
-      email: email.toLowerCase(),
-      password, // In production, NEVER store plain-text passwords
-      studentId,
-      department,
-      avatar: name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2),
-      joinedAt: new Date().toISOString(),
-    };
-    localStorage.setItem(USERS_KEY, JSON.stringify([...users, newUser]));
-    const { password: _, ...safeUser } = newUser;
-    setUser(safeUser);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(safeUser));
-    return { success: true };
-  };
+  // Persist user to localStorage whenever it changes
+  useEffect(() => {
+    if (user) localStorage.setItem('user', JSON.stringify(user));
+    else localStorage.removeItem('user');
+  }, [user]);
 
-  const login = ({ email, password }) => {
-    const users = getUsers();
-    const found = users.find(
-      u => u.email.toLowerCase() === email.toLowerCase() && u.password === password
-    );
-    if (!found) {
-      return { success: false, error: 'Invalid email or password.' };
-    }
-    const { password: _, ...safeUser } = found;
-    setUser(safeUser);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(safeUser));
-    return { success: true };
-  };
+  // ── Actions ────────────────────────────────────────────────────────────────
 
-  const logout = () => {
+  const loginWithGoogle = useCallback(() => {
+    // Simple redirect — backend handles the full OAuth flow
+    window.location.href = `${BASE_URL}/auth/google`;
+  }, []);
+
+  const loginWithEmail = useCallback(async (email, password) => {
+    const { data } = await api.post('/auth/login', { email, password });
+    storeTokens(data);
+    setUser(data.user);
+    return data.user;
+  }, []);
+
+  const register = useCallback(async (fields) => {
+    const { data } = await api.post('/auth/register', fields);
+    storeTokens(data);
+    setUser(data.user);
+    return data.user;
+  }, []);
+
+  const logout = useCallback(async () => {
+    try { await api.post('/auth/logout'); } catch { /* best-effort */ }
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
+    localStorage.removeItem('user');
     setUser(null);
-    localStorage.removeItem(SESSION_KEY);
-  };
+  }, []);
 
-  const updateUser = (updates) => {
-    const updated = { ...user, ...updates };
-    setUser(updated);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(updated));
-    // Also update the users store
-    const users = getUsers();
-    const idx = users.findIndex(u => u.id === user.id);
-    if (idx !== -1) {
-      users[idx] = { ...users[idx], ...updates };
-      localStorage.setItem(USERS_KEY, JSON.stringify(users));
-    }
-  };
+  const updateProfile = useCallback(async (fields) => {
+    const { data } = await api.patch('/auth/me', fields);
+    setUser(data);
+    return data;
+  }, []);
+
+  /**
+   * Called by <OAuthCallback /> after the backend redirects back with tokens
+   * in the URL hash. Stores tokens and fetches the user profile.
+   */
+  const handleOAuthCallback = useCallback(async (accessToken, refreshToken) => {
+    localStorage.setItem('accessToken', accessToken);
+    localStorage.setItem('refreshToken', refreshToken);
+    const { data } = await api.get('/auth/me');
+    setUser(data);
+    return data;
+  }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, register, login, logout, updateUser }}>
+    <AuthContext.Provider value={{
+      user,
+      loading,
+      isAuthenticated: !!user,
+      isVisitor: user?.role === 'visitor',
+      isStudent: !user || user?.role === 'student',
+      loginWithGoogle,
+      loginWithEmail,
+      register,
+      logout,
+      updateProfile,
+      handleOAuthCallback,
+    }}>
       {children}
     </AuthContext.Provider>
   );
-};
+}
 
-export const useAuth = () => {
+export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used inside AuthProvider');
+  if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>');
   return ctx;
-};
+}
 
-export default AuthContext;
+function storeTokens({ accessToken, refreshToken }) {
+  localStorage.setItem('accessToken', accessToken);
+  localStorage.setItem('refreshToken', refreshToken);
+}

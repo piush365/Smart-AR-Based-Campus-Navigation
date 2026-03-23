@@ -4,7 +4,7 @@ import { z } from 'zod';
 import ical from 'node-ical';
 import Papa from 'papaparse';
 import { prisma } from '../db.js';
-import { authRequired } from '../auth.js';
+import { requireAuth as authRequired } from '../auth.js';
 import { ok, badRequest } from '../lib/http.js';
 
 export const scheduleRouter = express.Router();
@@ -47,14 +47,14 @@ function toEventInput(e, source) {
 
 scheduleRouter.get('/', authRequired, async (req, res) => {
   const events = await prisma.classEvent.findMany({
-    where: { userId: req.auth.userId },
+    where: { userId: req.userId },
     orderBy: [{ day: 'asc' }, { startMins: 'asc' }],
   });
   return ok(res, { events });
 });
 
 scheduleRouter.delete('/', authRequired, async (req, res) => {
-  await prisma.classEvent.deleteMany({ where: { userId: req.auth.userId } });
+  await prisma.classEvent.deleteMany({ where: { userId: req.userId } });
   return ok(res, {});
 });
 
@@ -75,7 +75,7 @@ scheduleRouter.post('/manual', authRequired, async (req, res) => {
   if (parsed.data.endMins <= parsed.data.startMins) return badRequest(res, 'End time must be after start time.');
 
   const created = await prisma.classEvent.create({
-    data: { ...parsed.data, userId: req.auth.userId, source: 'manual' },
+    data: { ...parsed.data, userId: req.userId, source: 'manual' },
   });
   return ok(res, { event: created });
 });
@@ -191,13 +191,13 @@ scheduleRouter.post('/import', authRequired, upload.single('file'), async (req, 
   if (!imported.length) return badRequest(res, 'No classes found in file.');
 
   // Replace existing schedule by default (simple + predictable).
-  await prisma.classEvent.deleteMany({ where: { userId: req.auth.userId } });
+  await prisma.classEvent.deleteMany({ where: { userId: req.userId } });
   await prisma.classEvent.createMany({
-    data: imported.map(e => ({ ...e, userId: req.auth.userId })),
+    data: imported.map(e => ({ ...e, userId: req.userId })),
   });
 
   const events = await prisma.classEvent.findMany({
-    where: { userId: req.auth.userId },
+    where: { userId: req.userId },
     orderBy: [{ day: 'asc' }, { startMins: 'asc' }],
   });
   return ok(res, { importedCount: imported.length, rejectedCount: rejected.length, events });

@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 
 const Profile = () => {
-  const { user, logout, updateUser } = useAuth();
+  const { user, logout, updateProfile } = useAuth();
   const navigate = useNavigate();
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(user?.name || '');
@@ -16,16 +16,17 @@ const Profile = () => {
   const [darkPref, setDarkPref] = useState(false);
   const [privacy, setPrivacy] = useState(false);
 
-  const handleSaveName = () => {
+  const handleSaveName = async () => {
     const trimmed = nameValue.trim();
     if (!trimmed || trimmed === user?.name) { setEditingName(false); return; }
-    updateUser({
-      name: trimmed,
-      avatar: trimmed.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2),
-    });
-    setEditingName(false);
-    setSavedMsg(true);
-    setTimeout(() => setSavedMsg(false), 2000);
+    try {
+      await updateProfile({ name: trimmed });
+      setEditingName(false);
+      setSavedMsg(true);
+      setTimeout(() => setSavedMsg(false), 2000);
+    } catch {
+      setEditingName(false);
+    }
   };
 
   const handleLogout = () => {
@@ -108,7 +109,10 @@ const Profile = () => {
           fontSize: 24, fontWeight: 700, color: '#2563eb',
           marginBottom: 14,
         }}>
-          {user?.avatar || '?'}
+          {user?.name
+            ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+            : '?'
+          }
         </div>
 
         {/* Name (editable) */}
@@ -147,7 +151,9 @@ const Profile = () => {
           </p>
         )}
 
-        <p style={{ margin: 0, fontSize: 13, color: 'var(--text-3)' }}>{user?.department || 'Computer Science'}</p>
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--text-3)' }}>
+          {user?.role === 'visitor' ? 'Visitor' : (user?.department || 'Computer Science')}
+        </p>
       </div>
 
       <div style={{ padding: '16px' }}>
@@ -158,9 +164,7 @@ const Profile = () => {
           <InfoRow Icon={Mail} label="Email" value={user?.email} />
           <InfoRow Icon={Hash} label="Student ID" value={user?.studentId} />
           <InfoRow Icon={BookOpen} label="Department" value={user?.department} />
-          <InfoRow Icon={User} label="Member since" value={user?.joinedAt
-            ? new Date(user.joinedAt).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-            : null} />
+          <InfoRow Icon={User} label="Role" value={user?.role === 'visitor' ? 'Visitor 👤' : 'Student 🎓'} />
         </div>
 
         {/* Settings */}
