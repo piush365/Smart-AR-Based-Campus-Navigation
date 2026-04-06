@@ -1,13 +1,3 @@
-/**
- * src/App.jsx
- *
- * Fixes applied (vs original):
- *  - Added `destination` + `setDestination` shared state in AppShell
- *  - Passes destination/setDestination to Home, MapScreen, Schedule
- *  - BottomNavGuard now uses useLocation() hook (reactive) instead of
- *    window.location.pathname (not reactive — caused nav showing on camera screens)
- *  - /splash added to hiddenPaths so BottomNav is hidden on splash screen
- */
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -24,7 +14,6 @@ import Schedule      from './components/Schedule';
 import Profile       from './components/Profile';
 import BottomNav     from './components/BottomNav';
 
-// ── Route guard ──────────────────────────────────────────────────────────────
 function ProtectedRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
   if (loading) {
@@ -37,7 +26,6 @@ function ProtectedRoute({ children }) {
   return isAuthenticated ? children : <Navigate to="/login" replace />;
 }
 
-// ── Visitor-only guard (redirects students away) ──────────────────────────────
 function StudentRoute({ children }) {
   const { isAuthenticated, loading, isVisitor } = useAuth();
   if (loading) return null;
@@ -46,26 +34,19 @@ function StudentRoute({ children }) {
   return children;
 }
 
-// ── App shell — holds all shared navigation state ────────────────────────────
 function AppShell() {
   const { isAuthenticated, loading, isVisitor } = useAuth();
-
-  // Where the user currently is (set by QR scan)
   const [currentLocation, setCurrentLocation] = useState(null);
-
-  // Where the user wants to go (set by Home "Go" button, Schedule, or AR tap)
   const [destination, setDestination] = useState(null);
 
   if (loading) return null;
 
   return (
     <Routes>
-      {/* ── Public routes ── */}
-      <Route path="/splash"        element={<SplashScreen />} />
-      <Route path="/login"         element={<Login />} />
-      <Route path="/register"      element={<Register />} />
+      <Route path="/splash" element={<SplashScreen />} />
+      <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
 
-      {/* ── Protected routes (all roles) ── */}
       <Route path="/" element={
         <ProtectedRoute>
           {isVisitor
@@ -101,7 +82,6 @@ function AppShell() {
         </ProtectedRoute>
       } />
 
-      {/* ── Student-only routes ── */}
       <Route path="/schedule" element={
         <StudentRoute>
           <Schedule setDestination={setDestination} />
@@ -119,30 +99,26 @@ function AppShell() {
   );
 }
 
-// ── Root app ──────────────────────────────────────────────────────────────────
+const HIDDEN_NAV_PATHS = ['/scan', '/ar', '/splash', '/login', '/register'];
+
+function BottomNavGuard() {
+  const { isAuthenticated } = useAuth();
+  const { pathname } = useLocation();
+  const hidden = HIDDEN_NAV_PATHS.some(p => pathname.startsWith(p));
+  if (!isAuthenticated || hidden) return null;
+  return <BottomNav />;
+}
+
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <div style={{ maxWidth: '480px', margin: '0 auto', minHeight: '100dvh', position: 'relative' }}>
+        {/* Outer container centers on desktop, fills on mobile */}
+        <div style={{ maxWidth: '480px', margin: '0 auto', minHeight: '100dvh', position: 'relative', overflow: 'hidden' }}>
           <AppShell />
           <BottomNavGuard />
         </div>
       </BrowserRouter>
     </AuthProvider>
   );
-}
-
-// ── Bottom nav guard ──────────────────────────────────────────────────────────
-// Uses useLocation() hook so it re-renders reactively on route changes.
-// window.location.pathname does NOT trigger re-renders — that was the bug.
-const HIDDEN_NAV_PATHS = ['/scan', '/ar', '/splash', '/login', '/register'];
-
-function BottomNavGuard() {
-  const { isAuthenticated } = useAuth();
-  const { pathname } = useLocation(); // reactive — updates on every navigation
-
-  const hidden = HIDDEN_NAV_PATHS.some(p => pathname.startsWith(p));
-  if (!isAuthenticated || hidden) return null;
-  return <BottomNav />;
 }

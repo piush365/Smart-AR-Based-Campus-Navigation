@@ -18,17 +18,32 @@ import { useNavigate } from 'react-router-dom';
 import jsQR from 'jsqr';
 
 // Map of nodeId → human-readable label (keep in sync with MapScreen nodes)
+// Must exactly match the keys in MapScreen.jsx NODES
 const NODE_LABELS = {
-  'main-gate':        'Main Gate',
-  'computer-lab':     'Computer Lab',
-  'science-lab':      'Science Lab',
-  'electronics-lab':  'Electronics Lab',
-  'lecture-hall-a':   'Lecture Hall A',
-  'lecture-hall-b':   'Lecture Hall B',
+  'main-gate':        'Walchand Front Gate',
+  'cse-dept':         'CSE Department',
+  'electronics-dept': 'Electronics Dept',
+  'electrical-dept':  'Electrical Dept',
+  'mechanical-dept':  'Mechanical Dept',
+  'civil-dept':       'Civil Department',
+  'civil-lab':        'Civil Dept Lab',
+  'mechanical-lab':   'Mechanical Lab',
+  'workshop':         'Workshop Lab',
   'library':          'Library',
-  'canteen':          'Canteen',
-  'admin-office':     'Admin Office',
-  'classroom-3':      'Classroom 3',
+  'tilak-hall':       'Tilak Hall',
+  'govt-canteen':     'Government Canteen',
+  'back-canteen':     'Back Canteen',
+  'hostel':           'Walchand Hostel',
+  'exam-center':      'Exam Center',
+  'polytechnic':      'Polytechnic Wing',
+  'gym-khana':        'Gym Khana',
+  'programming-lab':  'Programming Lab',
+  'students-section': 'Students Section',
+  'open-theatre':     'Open Theatre',
+  'iot-hut':          'IoT Hut',
+  'it-hut':           'IT Hut',
+  'back-gate':        'Back Gate',
+  'chinar-circle':    'Chinar Circle',
 };
 
 export default function QRScanner({ setCurrentLocation }) {

@@ -11,14 +11,14 @@ import { Map, Zap, MapPin, QrCode, Search, Navigation, Info } from 'lucide-react
 
 // Key campus POIs visitors commonly need
 const CAMPUS_POIS = [
-  { label: 'Main Gate',          nodeId: 'main_gate',    icon: '🚪', desc: 'Primary entrance' },
-  { label: 'Admin Block',        nodeId: 'admin_block',  icon: '🏢', desc: 'Admissions & enquiries' },
-  { label: 'Library',            nodeId: 'library',      icon: '📚', desc: 'Central library' },
-  { label: 'Cafeteria',          nodeId: 'cafeteria',    icon: '🍽️', desc: 'Food & beverages' },
-  { label: 'Auditorium',         nodeId: 'auditorium',   icon: '🎭', desc: 'Events & seminars' },
-  { label: 'Medical Centre',     nodeId: 'medical',      icon: '🏥', desc: 'Health services' },
-  { label: 'Parking',            nodeId: 'parking',      icon: '🅿️', desc: 'Student & visitor parking' },
-  { label: 'Sports Complex',     nodeId: 'sports',       icon: '⚽', desc: 'Sports facilities' },
+  { label: 'Main Gate',         nodeId: 'main-gate',       icon: '🚪', desc: 'Primary campus entrance' },
+  { label: 'Library',           nodeId: 'library',          icon: '📚', desc: 'Ajit Gulabchand Library' },
+  { label: 'Government Canteen',nodeId: 'govt-canteen',     icon: '🍽️', desc: 'Main student canteen' },
+  { label: 'CSE Department',    nodeId: 'cse-dept',         icon: '💻', desc: 'Computer Science & Engg' },
+  { label: 'Exam Center',       nodeId: 'exam-center',      icon: '📝', desc: 'Examination centre' },
+  { label: 'Hostel',            nodeId: 'hostel',           icon: '🏠', desc: 'Student hostel block' },
+  { label: 'Gym Khana',         nodeId: 'gym-khana',        icon: '🏋️', desc: 'Fitness & sports facilities' },
+  { label: 'Tilak Hall',        nodeId: 'tilak-hall',       icon: '🎭', desc: 'Seminar / community hall' },
 ];
 
 const VisitorHome = ({ setDestination }) => {

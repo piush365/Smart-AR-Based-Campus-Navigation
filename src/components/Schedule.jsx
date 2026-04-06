@@ -1,13 +1,3 @@
-/**
- * src/components/Schedule.jsx
- *
- * Full weekly timetable + day-list view.
- *
- * - Fetches from GET /schedule (real backend data via api.js)
- * - Falls back to hardcoded classes from Home.jsx if API returns empty
- * - Toggle between "List" (per-day) and "Week" (Mon–Sat grid) views
- * - Navigate button on each class sets destination and goes to /map
- */
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Clock, MapPin, Navigation, LayoutGrid, List, RefreshCw } from 'lucide-react';
@@ -16,9 +6,8 @@ import api from '../api';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const WORK_DAYS = [1, 2, 3, 4, 5, 6]; // Mon–Sat
+const WORK_DAYS = [1, 2, 3, 4, 5, 6];
 
-// Convert api ClassEvent (day + startMins/endMins) to the component shape
 function apiToDisplay(ev) {
   return {
     ...ev,
@@ -30,7 +19,6 @@ function apiToDisplay(ev) {
   };
 }
 
-// Convert hardcoded Home.jsx shape to API-style for unified rendering
 function homeToDisplay(cls) {
   return {
     ...cls,
@@ -49,11 +37,123 @@ const TYPE_COLORS = {
   default:  { bg: '#f3f4f6', border: '#e5e7eb', text: '#374151' },
 };
 
+// ── WeekGrid defined FIRST (before Schedule) so the const is initialized ──────
+const WeekGrid = ({ classes: gridClasses, today, nowMins, onNavigate }) => {
+  const START_H = 8;
+  const END_H = 20;
+  const ROW_PX = 56;
+  const gridHeight = ((END_H - START_H) * 60 / 30) * ROW_PX;
+
+  const byDay = useMemo(() => {
+    const map = {};
+    WORK_DAYS.forEach(d => { map[d] = []; });
+    gridClasses.forEach(cls => { if (map[cls.day]) map[cls.day].push(cls); });
+    return map;
+  }, [gridClasses]);
+
+  const positionOf = (cls) => {
+    const startOffset = Math.max(0, cls.startMins - START_H * 60);
+    const duration = cls.endMins - cls.startMins;
+    return {
+      top: (startOffset / 30) * ROW_PX,
+      height: Math.max(ROW_PX * 0.8, (duration / 30) * ROW_PX - 4),
+    };
+  };
+
+  const timeLabels = [];
+  for (let h = START_H; h <= END_H; h++) timeLabels.push(h);
+
+  return (
+    <div style={{ overflowX: 'auto', overflowY: 'hidden', paddingBottom: 16 }}>
+      <div style={{ minWidth: 480, display: 'flex' }}>
+
+        {/* Time axis */}
+        <div style={{ width: 44, flexShrink: 0, position: 'relative', height: gridHeight + 32 }}>
+          <div style={{ height: 28 }} />
+          {timeLabels.map(h => (
+            <div key={h} style={{
+              position: 'absolute',
+              top: ((h - START_H) * 2) * ROW_PX + 28,
+              left: 0, width: '100%',
+              fontSize: 10, color: 'var(--text-4)', fontWeight: 600,
+              textAlign: 'right', paddingRight: 6, lineHeight: '1',
+            }}>
+              {h % 12 || 12}{h < 12 ? 'a' : 'p'}
+            </div>
+          ))}
+        </div>
+
+        {/* Day columns */}
+        {WORK_DAYS.map(d => (
+          <div key={d} style={{ flex: 1, minWidth: 70 }}>
+            <div style={{
+              height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 11, fontWeight: 700,
+              color: d === today ? '#2563eb' : 'var(--text-3)',
+              borderBottom: d === today ? '2px solid #2563eb' : '2px solid transparent',
+            }}>
+              {DAY_ABBR[d]}
+              {d === today && (
+                <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#2563eb', marginLeft: 3, display: 'inline-block' }} />
+              )}
+            </div>
+
+            <div style={{ position: 'relative', height: gridHeight, background: d % 2 === 0 ? 'rgba(0,0,0,0.01)' : 'transparent' }}>
+              {/* Hour gridlines */}
+              {timeLabels.map(h => (
+                <div key={h} style={{
+                  position: 'absolute', top: (h - START_H) * 2 * ROW_PX,
+                  left: 0, right: 0, height: 1, background: 'var(--border)',
+                }} />
+              ))}
+
+              {/* Class blocks */}
+              {(byDay[d] || []).map(cls => {
+                const { top, height } = positionOf(cls);
+                const s = TYPE_COLORS[cls.type] || TYPE_COLORS.default;
+                const isLive = d === today && nowMins >= cls.startMins && nowMins <= cls.endMins;
+                return (
+                  <div
+                    key={cls.id}
+                    onClick={() => onNavigate(cls.nodeId)}
+                    title={`${cls.subject}\n${fmt(cls.startH, cls.startM)} – ${fmt(cls.endH, cls.endM)}\n${cls.room || ''}`}
+                    style={{
+                      position: 'absolute', top, left: 2, right: 2, height,
+                      background: s.bg,
+                      border: `1.5px solid ${isLive ? '#2563eb' : s.border}`,
+                      borderRadius: 8, padding: '4px 6px', overflow: 'hidden',
+                      cursor: cls.nodeId ? 'pointer' : 'default',
+                      boxShadow: isLive ? '0 0 0 2px rgba(37,99,235,0.2)' : 'none',
+                      transition: 'transform 0.1s',
+                    }}
+                    onMouseEnter={e => { if (cls.nodeId) e.currentTarget.style.transform = 'scale(1.02)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.transform = ''; }}
+                  >
+                    <p style={{ margin: 0, fontSize: 10, fontWeight: 700, color: s.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {cls.subject}
+                    </p>
+                    {height > 36 && (
+                      <p style={{ margin: '1px 0 0', fontSize: 9, color: s.text, opacity: 0.7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {cls.room} · {fmt(cls.startH, cls.startM)}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ── Schedule (main component) ─────────────────────────────────────────────────
 const Schedule = ({ setDestination }) => {
   const navigate = useNavigate();
   const today = new Date().getDay();
   const [selectedDay, setSelectedDay] = useState(today === 0 ? 1 : today);
-  const [view, setView] = useState('list'); // 'list' | 'week'
+  const [view, setView] = useState('list');
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -67,10 +167,8 @@ const Schedule = ({ setDestination }) => {
     try {
       const { data } = await api.get('/schedule');
       const mapped = (data.events || []).map(apiToDisplay);
-      // fallback to hardcoded data if API returns nothing (dev env without seeded data)
       setClasses(mapped.length > 0 ? mapped : ALL_CLASSES.map(homeToDisplay));
     } catch {
-      // If API fails entirely, fall back to local data so the screen isn't blank
       setClasses(ALL_CLASSES.map(homeToDisplay));
       setError('Could not load live schedule — showing sample data.');
     } finally {
@@ -97,6 +195,7 @@ const Schedule = ({ setDestination }) => {
     return { type: 'done', label: 'Done' };
   };
 
+  // Single navigate handler shared by both list and week views
   const handleNavigate = (nodeId) => {
     if (!nodeId) return;
     setDestination(nodeId);
@@ -105,125 +204,12 @@ const Schedule = ({ setDestination }) => {
 
   const typeStyle = (type) => TYPE_COLORS[type] || TYPE_COLORS.default;
 
-  // ── WEEK VIEW ──────────────────────────────────────────────────────────────
-  const WeekGrid = ({ classes: gridClasses }) => {
-    // Time range: 8 AM – 8 PM in 30-min slots
-    const START_H = 8;
-    const END_H = 20;
-    const TOTAL_MINS = (END_H - START_H) * 60;
-    const ROW_PX = 56; // pixels per 30 mins
-
-    const gridHeight = (TOTAL_MINS / 30) * ROW_PX;
-
-    // Pre-bucket classes by day
-    const byDay = useMemo(() => {
-      const map = {};
-      WORK_DAYS.forEach(d => { map[d] = []; });
-      gridClasses.forEach(cls => { if (map[cls.day]) map[cls.day].push(cls); });
-      return map;
-    }, [gridClasses]);
-
-    const positionOf = (cls) => {
-      const startOffset = Math.max(0, cls.startMins - START_H * 60);
-      const duration = cls.endMins - cls.startMins;
-      return {
-        top: (startOffset / 30) * ROW_PX,
-        height: Math.max(ROW_PX * 0.8, (duration / 30) * ROW_PX - 4),
-      };
-    };
-
-    const timeLabels = [];
-    for (let h = START_H; h <= END_H; h++) {
-      timeLabels.push(h);
-    }
-
-    return (
-      <div style={{ overflowX: 'auto', overflowY: 'hidden', paddingBottom: 16 }}>
-        <div style={{ minWidth: 480, display: 'flex' }}>
-          {/* Time axis */}
-          <div style={{ width: 44, flexShrink: 0, position: 'relative', height: gridHeight + 32 }}>
-            <div style={{ height: 28 }} />{/* header spacer */}
-            {timeLabels.map(h => (
-              <div key={h} style={{
-                position: 'absolute',
-                top: ((h - START_H) * 2) * ROW_PX + 28,
-                left: 0, width: '100%',
-                fontSize: 10, color: 'var(--text-4)', fontWeight: 600,
-                textAlign: 'right', paddingRight: 6,
-                lineHeight: '1',
-              }}>
-                {h % 12 || 12}{h < 12 ? 'a' : 'p'}
-              </div>
-            ))}
-          </div>
-
-          {/* Day columns */}
-          {WORK_DAYS.map(d => (
-            <div key={d} style={{ flex: 1, minWidth: 70 }}>
-              {/* Day header */}
-              <div style={{
-                height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 11, fontWeight: 700,
-                color: d === today ? '#2563eb' : 'var(--text-3)',
-                borderBottom: d === today ? '2px solid #2563eb' : '2px solid transparent',
-              }}>
-                {DAY_ABBR[d]}
-                {d === today && <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#2563eb', marginLeft: 3, display: 'inline-block' }} />}
-              </div>
-
-              {/* Column area */}
-              <div style={{ position: 'relative', height: gridHeight, background: d % 2 === 0 ? 'rgba(0,0,0,0.01)' : 'transparent' }}>
-                {/* Hour gridlines */}
-                {timeLabels.map(h => (
-                  <div key={h} style={{
-                    position: 'absolute', top: (h - START_H) * 2 * ROW_PX,
-                    left: 0, right: 0, height: 1,
-                    background: 'var(--border)',
-                  }} />
-                ))}
-
-                {/* Class blocks */}
-                {byDay[d].map(cls => {
-                  const { top, height } = positionOf(cls);
-                  const s = typeStyle(cls.type);
-                  const isLive = selectedDay === d && nowMins >= cls.startMins && nowMins <= cls.endMins;
-                  return (
-                    <div
-                      key={cls.id}
-                      onClick={() => handleNavigate(cls.nodeId)}
-                      title={`${cls.subject}\n${fmt(cls.startH, cls.startM)} – ${fmt(cls.endH, cls.endM)}\n${cls.room || ''}`}
-                      style={{
-                        position: 'absolute', top, left: 2, right: 2, height,
-                        background: s.bg, border: `1.5px solid ${isLive ? '#2563eb' : s.border}`,
-                        borderRadius: 8, padding: '4px 6px', overflow: 'hidden',
-                        cursor: cls.nodeId ? 'pointer' : 'default',
-                        boxShadow: isLive ? '0 0 0 2px rgba(37,99,235,0.2)' : 'none',
-                        transition: 'transform 0.1s',
-                      }}
-                      onMouseEnter={e => { if (cls.nodeId) e.currentTarget.style.transform = 'scale(1.02)'; }}
-                      onMouseLeave={e => { e.currentTarget.style.transform = ''; }}
-                    >
-                      <p style={{ margin: 0, fontSize: 10, fontWeight: 700, color: s.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {cls.subject}
-                      </p>
-                      {height > 36 && (
-                        <p style={{ margin: '1px 0 0', fontSize: 9, color: s.text, opacity: 0.7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {cls.room} · {fmt(cls.startH, cls.startM)}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div style={{ background: 'var(--bg)', minHeight: '100%', paddingBottom: 80 }}>
+      <style>{`
+        @keyframes shimmer { 0%{background-position:200% 0} to{background-position:-200% 0} }
+        @keyframes spin { to { transform:rotate(360deg) } }
+      `}</style>
 
       {/* Header */}
       <div style={{
@@ -235,7 +221,6 @@ const Schedule = ({ setDestination }) => {
             Class Schedule
           </h2>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {/* Refresh */}
             <button
               id="schedule-refresh"
               onClick={fetchSchedule}
@@ -245,7 +230,6 @@ const Schedule = ({ setDestination }) => {
             >
               <RefreshCw size={16} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
             </button>
-            {/* View toggle */}
             <div style={{ display: 'flex', background: '#f0f0f0', borderRadius: 8, padding: 3 }}>
               {[{ key: 'list', Icon: List }, { key: 'week', Icon: LayoutGrid }].map(({ key, Icon }) => (
                 <button
@@ -267,14 +251,12 @@ const Schedule = ({ setDestination }) => {
           </div>
         </div>
 
-        {/* Error banner */}
         {error && (
           <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 12px', marginBottom: 8, fontSize: 12, color: '#92400e' }}>
             ⚠️ {error}
           </div>
         )}
 
-        {/* Day tabs — only for list view */}
         {view === 'list' && (
           <div style={{ display: 'flex', gap: 4, overflowX: 'auto', scrollbarWidth: 'none' }}>
             {WORK_DAYS.map(d => {
@@ -316,7 +298,7 @@ const Schedule = ({ setDestination }) => {
         </div>
       )}
 
-      {/* ── LIST VIEW ── */}
+      {/* List view */}
       {!loading && view === 'list' && (
         <div style={{ padding: '16px' }}>
           {dayClasses.length === 0 ? (
@@ -331,7 +313,6 @@ const Schedule = ({ setDestination }) => {
               const isDone = status?.type === 'done';
               const isLive = status?.type === 'live';
               const s = typeStyle(cls.type);
-
               return (
                 <div
                   key={cls.id || i}
@@ -354,7 +335,6 @@ const Schedule = ({ setDestination }) => {
                       )}
                     </div>
                   </div>
-
                   <p style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
                     {cls.subject}
                     {cls.code && <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-3)', marginLeft: 6 }}>{cls.code}</span>}
@@ -380,11 +360,15 @@ const Schedule = ({ setDestination }) => {
         </div>
       )}
 
-      {/* ── WEEK VIEW ── */}
+      {/* Week view */}
       {!loading && view === 'week' && (
         <div style={{ padding: '12px 8px' }}>
-          <style>{`@keyframes shimmer { 0%{background-position:200% 0} to{background-position:-200% 0} } @keyframes spin { to { transform:rotate(360deg) } }`}</style>
-          <WeekGrid classes={classes} />
+          <WeekGrid
+            classes={classes}
+            today={today}
+            nowMins={nowMins}
+            onNavigate={handleNavigate}
+          />
           <p style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-4)', marginTop: 8 }}>
             Tap any class block to navigate to it
           </p>

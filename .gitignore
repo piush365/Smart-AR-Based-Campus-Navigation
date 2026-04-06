@@ -25,3 +25,12 @@ dist-ssr
 
 smart-campus-backend/.env
 .env
+
+firebaseapi.txt
+
+smart-campus-guide-3db10-firebase-adminsdk-fbsvc-fb55ed9551.json
+
+# Firebase Secrets
+*.json
+!package.json
+!tsconfig.json

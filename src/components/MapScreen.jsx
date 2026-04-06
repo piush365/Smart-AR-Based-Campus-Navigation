@@ -335,9 +335,13 @@ export default function MapScreen({ currentLocation: propLocation, destination: 
 
       mk.on('click', () => {
         setOrigin(prev => {
-          if (!prev) return id;
-          setDest(id);
-          return prev;
+          if (!prev) {
+            return id;
+          } else {
+            setDestLocal(id);
+            propSetDest?.(id);
+            return prev;
+          }
         });
       });
 

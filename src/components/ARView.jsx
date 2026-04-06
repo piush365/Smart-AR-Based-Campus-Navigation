@@ -27,17 +27,21 @@ import { useNavigate } from 'react-router-dom';
 // bearing: degrees clockwise from north, as seen from the main gate / centre of campus.
 // distance: approximate walking distance in metres (for "X m away" label).
 // Adjust these for your actual campus layout.
+// Real WCE campus buildings — bearings are approximate degrees clockwise from north
+// as seen from the main gate (16.8458, 74.6026). Distances are walking distances in metres.
 const CAMPUS_NODES = [
-  { id: 'main-gate',       label: 'Main Gate',       bearing: 0,    distance: 0,   color: '#4285F4' },
-  { id: 'computer-lab',    label: 'Computer Lab',    bearing: 45,   distance: 120, color: '#34A853' },
-  { id: 'science-lab',     label: 'Science Lab',     bearing: 90,   distance: 200, color: '#FBBC04' },
-  { id: 'electronics-lab', label: 'Electronics Lab', bearing: 135,  distance: 180, color: '#EA4335' },
-  { id: 'lecture-hall-a',  label: 'Lecture Hall A',  bearing: 180,  distance: 150, color: '#9C27B0' },
-  { id: 'lecture-hall-b',  label: 'Lecture Hall B',  bearing: 200,  distance: 170, color: '#FF6D00' },
-  { id: 'library',         label: 'Library',         bearing: 270,  distance: 220, color: '#00ACC1' },
-  { id: 'canteen',         label: 'Canteen',         bearing: 315,  distance: 100, color: '#F06292' },
-  { id: 'admin-office',    label: 'Admin Office',    bearing: 340,  distance: 80,  color: '#8D6E63' },
-  { id: 'classroom-3',     label: 'Classroom 3',     bearing: 60,   distance: 130, color: '#26A69A' },
+  { id: 'programming-lab',  label: 'Programming Lab',  bearing: 220, distance: 80,  color: '#4285F4' },
+  { id: 'students-section', label: 'Students Section', bearing: 230, distance: 120, color: '#34A853' },
+  { id: 'cse-dept',         label: 'CSE Department',   bearing: 245, distance: 170, color: '#FBBC04' },
+  { id: 'electronics-dept', label: 'Electronics Dept', bearing: 250, distance: 160, color: '#EA4335' },
+  { id: 'it-hut',           label: 'IT Hut',           bearing: 248, distance: 140, color: '#9C27B0' },
+  { id: 'iot-hut',          label: 'IoT Hut',          bearing: 246, distance: 150, color: '#FF6D00' },
+  { id: 'library',          label: 'Library',          bearing: 260, distance: 200, color: '#00ACC1' },
+  { id: 'electrical-dept',  label: 'Electrical Dept',  bearing: 265, distance: 210, color: '#F06292' },
+  { id: 'tilak-hall',       label: 'Tilak Hall',       bearing: 258, distance: 195, color: '#8D6E63' },
+  { id: 'govt-canteen',     label: 'Govt Canteen',     bearing: 280, distance: 300, color: '#26A69A' },
+  { id: 'hostel',           label: 'Hostel',           bearing: 200, distance: 220, color: '#5C6BC0' },
+  { id: 'exam-center',      label: 'Exam Center',      bearing: 238, distance: 250, color: '#EF5350' },
 ];
 
 // Field of view in degrees that the camera covers horizontally

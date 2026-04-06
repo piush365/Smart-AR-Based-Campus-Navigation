@@ -1,16 +1,21 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
-const SplashScreen = ({ onDone }) => {
-  const [visible, setVisible] = useState(true);
+const SplashScreen = () => {
   const [fade, setFade] = useState(false);
+  const navigate = useNavigate();
+  const { isAuthenticated, loading } = useAuth();
 
   useEffect(() => {
     const t1 = setTimeout(() => setFade(true), 1800);
-    const t2 = setTimeout(() => { setVisible(false); onDone(); }, 2300);
+    const t2 = setTimeout(() => {
+      if (!loading) {
+        navigate(isAuthenticated ? '/' : '/login', { replace: true });
+      }
+    }, 2300);
     return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [onDone]);
-
-  if (!visible) return null;
+  }, [loading, isAuthenticated, navigate]);
 
   return (
     <div style={{
@@ -22,7 +27,6 @@ const SplashScreen = ({ onDone }) => {
       transition: 'opacity 0.5s ease',
       opacity: fade ? 0 : 1,
     }}>
-      {/* Logo */}
       <div style={{
         width: 72, height: 72,
         background: '#2563eb',
@@ -45,7 +49,6 @@ const SplashScreen = ({ onDone }) => {
         </p>
       </div>
 
-      {/* Loading bar */}
       <div style={{
         position: 'absolute', bottom: 0, left: 0, right: 0, height: 3,
         background: '#f3f4f6', overflow: 'hidden',
@@ -58,10 +61,10 @@ const SplashScreen = ({ onDone }) => {
       </div>
 
       <style>{`
-        @keyframes slideRight {
-          from { width: 0; }
-          to   { width: 100%; }
-        }
+        @keyframes slideRight { from { width: 0; } to { width: 100%; } }
+        @keyframes scaleIn { from { opacity:0; transform:scale(0.96); } to { opacity:1; transform:scale(1); } }
+        @keyframes fadeUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
       `}</style>
     </div>
   );
