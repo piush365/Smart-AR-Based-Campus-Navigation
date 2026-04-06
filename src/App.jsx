@@ -15,7 +15,6 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import SplashScreen  from './components/SplashScreen';
 import Login         from './components/Login';
 import Register      from './components/Register';
-import OAuthCallback from './components/OAuthCallback';
 import Home          from './components/Home';
 import VisitorHome   from './components/VisitorHome';
 import MapScreen     from './components/MapScreen';
@@ -65,8 +64,6 @@ function AppShell() {
       <Route path="/splash"        element={<SplashScreen />} />
       <Route path="/login"         element={<Login />} />
       <Route path="/register"      element={<Register />} />
-      {/* Google OAuth landing — MUST be public, user not authenticated yet */}
-      <Route path="/auth/callback" element={<OAuthCallback />} />
 
       {/* ── Protected routes (all roles) ── */}
       <Route path="/" element={
@@ -139,7 +136,7 @@ export default function App() {
 // ── Bottom nav guard ──────────────────────────────────────────────────────────
 // Uses useLocation() hook so it re-renders reactively on route changes.
 // window.location.pathname does NOT trigger re-renders — that was the bug.
-const HIDDEN_NAV_PATHS = ['/scan', '/ar', '/splash', '/login', '/register', '/auth/callback'];
+const HIDDEN_NAV_PATHS = ['/scan', '/ar', '/splash', '/login', '/register'];
 
 function BottomNavGuard() {
   const { isAuthenticated } = useAuth();

@@ -1,28 +1,16 @@
-/**
- * src/context/AuthContext.jsx
- *
- * Production auth context backed by the Express/Prisma backend.
- *
- * Supports:
- *   - Google OAuth (redirects to backend /auth/google)
- *   - Email + password (POST /auth/login, /auth/register)
- *   - JWT access + refresh tokens (stored in localStorage)
- *   - Auto-bootstrap on page reload from stored tokens
- *
- * The Google OAuth flow:
- *   1. User clicks "Sign in with Google" → navigated to /auth/google on backend.
- *   2. Backend redirects to Google consent screen.
- *   3. Google redirects to /auth/google/callback on backend.
- *   4. Backend issues JWTs and redirects to /auth/callback on frontend with
- *      tokens in the URL hash (#access=...&refresh=...).
- *   5. <OAuthCallback /> component reads the hash, stores tokens, redirects to /.
- */
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect } from 'react';
+import { 
+  onAuthStateChanged, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut 
+} from 'firebase/auth';
+import { auth } from '../firebase.js';
 import api from '../api.js';
 
 const AuthContext = createContext(null);
-
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
@@ -30,75 +18,71 @@ export function AuthProvider({ children }) {
   });
   const [loading, setLoading] = useState(true);
 
-  // On mount — verify stored token is still valid
+  // Sync state between Firebase Auth and our custom backend (/auth/me)
   useEffect(() => {
-    const token = localStorage.getItem('accessToken');
-    if (!token) { setLoading(false); return; }
-
-    api.get('/auth/me')
-      .then(({ data }) => setUser(data))
-      .catch(() => {
-        // Token invalid even after refresh attempt — clear everything
-        localStorage.removeItem('accessToken');
-        localStorage.removeItem('refreshToken');
-        localStorage.removeItem('user');
+    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!firebaseUser) {
         setUser(null);
-      })
-      .finally(() => setLoading(false));
+        localStorage.removeItem('user');
+        setLoading(false);
+      } else {
+        try {
+          // If we log in via Google, we might not have a backend user yet.
+          // Calling /auth/me on the backend checks if doc exists. If not, creates one.
+          const { data } = await api.get('/auth/me');
+          setUser(data);
+          localStorage.setItem('user', JSON.stringify(data));
+        } catch (err) {
+          console.error("Failed to fetch user data", err);
+          // If the backend fails, sign out purely from client
+          setUser(null);
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
+    return unsub;
   }, []);
 
-  // Persist user to localStorage whenever it changes
-  useEffect(() => {
-    if (user) localStorage.setItem('user', JSON.stringify(user));
-    else localStorage.removeItem('user');
-  }, [user]);
+  const loginWithGoogle = async () => {
+    const provider = new GoogleAuthProvider();
+    await signInWithPopup(auth, provider);
+  };
 
-  // ── Actions ────────────────────────────────────────────────────────────────
+  const loginWithEmail = async (email, password) => {
+    await signInWithEmailAndPassword(auth, email, password);
+  };
 
-  const loginWithGoogle = useCallback(() => {
-    // Simple redirect — backend handles the full OAuth flow
-    window.location.href = `${BASE_URL}/auth/google`;
-  }, []);
-
-  const loginWithEmail = useCallback(async (email, password) => {
-    const { data } = await api.post('/auth/login', { email, password });
-    storeTokens(data);
+  const register = async (fields) => {
+    // 1. Create Firebase user
+    const cred = await createUserWithEmailAndPassword(auth, fields.email, fields.password);
+    // 2. We could update displayName here if we wanted in Firebase, but we just use our backend.
+    
+    // 3. Inform our backend to create the user with role details (we can do this safely since we are now authed as the user)
+    const { data } = await api.post('/auth/register', {
+      name: fields.name,
+      email: fields.email,
+      role: fields.role,
+      studentId: fields.studentId,
+      department: fields.department
+    });
+    
     setUser(data.user);
     return data.user;
-  }, []);
+  };
 
-  const register = useCallback(async (fields) => {
-    const { data } = await api.post('/auth/register', fields);
-    storeTokens(data);
-    setUser(data.user);
-    return data.user;
-  }, []);
-
-  const logout = useCallback(async () => {
-    try { await api.post('/auth/logout'); } catch { /* best-effort */ }
-    localStorage.removeItem('accessToken');
-    localStorage.removeItem('refreshToken');
-    localStorage.removeItem('user');
+  const logout = async () => {
+    await signOut(auth);
     setUser(null);
-  }, []);
+    localStorage.removeItem('user');
+  };
 
-  const updateProfile = useCallback(async (fields) => {
+  const updateProfile = async (fields) => {
     const { data } = await api.patch('/auth/me', fields);
     setUser(data);
+    localStorage.setItem('user', JSON.stringify(data));
     return data;
-  }, []);
-
-  /**
-   * Called by <OAuthCallback /> after the backend redirects back with tokens
-   * in the URL hash. Stores tokens and fetches the user profile.
-   */
-  const handleOAuthCallback = useCallback(async (accessToken, refreshToken) => {
-    localStorage.setItem('accessToken', accessToken);
-    localStorage.setItem('refreshToken', refreshToken);
-    const { data } = await api.get('/auth/me');
-    setUser(data);
-    return data;
-  }, []);
+  };
 
   return (
     <AuthContext.Provider value={{
@@ -112,7 +96,6 @@ export function AuthProvider({ children }) {
       register,
       logout,
       updateProfile,
-      handleOAuthCallback,
     }}>
       {children}
     </AuthContext.Provider>
@@ -123,9 +106,4 @@ export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>');
   return ctx;
-}
-
-function storeTokens({ accessToken, refreshToken }) {
-  localStorage.setItem('accessToken', accessToken);
-  localStorage.setItem('refreshToken', refreshToken);
 }

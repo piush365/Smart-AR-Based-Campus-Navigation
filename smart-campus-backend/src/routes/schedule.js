@@ -3,7 +3,7 @@ import multer from 'multer';
 import { z } from 'zod';
 import ical from 'node-ical';
 import Papa from 'papaparse';
-import { prisma } from '../db.js';
+import { firestore } from '../db.js';
 import { requireAuth as authRequired } from '../auth.js';
 import { ok, badRequest } from '../lib/http.js';
 
@@ -21,7 +21,6 @@ function minsSinceMidnight(date) {
 }
 
 function normalizeDay(jsDay) {
-  // JS: 0=Sun..6=Sat (same as our storage)
   const d = clampInt(jsDay, 0, 6);
   return d ?? 0;
 }
@@ -45,16 +44,26 @@ function toEventInput(e, source) {
   };
 }
 
-scheduleRouter.get('/', authRequired, async (req, res) => {
-  const events = await prisma.classEvent.findMany({
-    where: { userId: req.userId },
-    orderBy: [{ day: 'asc' }, { startMins: 'asc' }],
+async function getUserEvents(userId) {
+  const snap = await firestore.collection('classEvents').where('userId', '==', userId).get();
+  const events = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  events.sort((a, b) => {
+    if (a.day !== b.day) return a.day - b.day;
+    return a.startMins - b.startMins;
   });
+  return events;
+}
+
+scheduleRouter.get('/', authRequired, async (req, res) => {
+  const events = await getUserEvents(req.userId);
   return ok(res, { events });
 });
 
 scheduleRouter.delete('/', authRequired, async (req, res) => {
-  await prisma.classEvent.deleteMany({ where: { userId: req.userId } });
+  const snap = await firestore.collection('classEvents').where('userId', '==', req.userId).get();
+  const batch = firestore.batch();
+  snap.docs.forEach(doc => batch.delete(doc.ref));
+  await batch.commit();
   return ok(res, {});
 });
 
@@ -74,10 +83,10 @@ scheduleRouter.post('/manual', authRequired, async (req, res) => {
   if (!parsed.success) return badRequest(res, 'Invalid input', parsed.error.flatten());
   if (parsed.data.endMins <= parsed.data.startMins) return badRequest(res, 'End time must be after start time.');
 
-  const created = await prisma.classEvent.create({
-    data: { ...parsed.data, userId: req.userId, source: 'manual' },
-  });
-  return ok(res, { event: created });
+  const ref = firestore.collection('classEvents').doc();
+  const data = { ...parsed.data, userId: req.userId, source: 'manual', createdAt: new Date().toISOString() };
+  await ref.set(data);
+  return ok(res, { event: { id: ref.id, ...data } });
 });
 
 scheduleRouter.post('/import', authRequired, upload.single('file'), async (req, res) => {
@@ -129,9 +138,6 @@ scheduleRouter.post('/import', authRequired, upload.single('file'), async (req, 
     const parsed = Papa.parse(content, { header: true, skipEmptyLines: true });
     if (parsed.errors?.length) return badRequest(res, 'Invalid CSV file', parsed.errors.slice(0, 5));
 
-    // Expected columns (flexible): subject, code, type, room, nodeId, day, start, end
-    // - day can be 0-6 or Sun/Mon...
-    // - start/end can be HH:MM (24h) or H:MM AM/PM
     const dayMap = { sun: 0, sunday: 0, mon: 1, monday: 1, tue: 2, tuesday: 2, wed: 3, wednesday: 3, thu: 4, thursday: 4, fri: 5, friday: 5, sat: 6, saturday: 6 };
 
     function parseTimeToMins(s) {
@@ -190,16 +196,23 @@ scheduleRouter.post('/import', authRequired, upload.single('file'), async (req, 
 
   if (!imported.length) return badRequest(res, 'No classes found in file.');
 
-  // Replace existing schedule by default (simple + predictable).
-  await prisma.classEvent.deleteMany({ where: { userId: req.userId } });
-  await prisma.classEvent.createMany({
-    data: imported.map(e => ({ ...e, userId: req.userId })),
+  // Replace existing schedule
+  const oldSnap = await firestore.collection('classEvents').where('userId', '==', req.userId).get();
+  
+  // We can only do 500 writes per batch in Firestore. Let's do it simply, since class schedule size is small
+  const batch = firestore.batch();
+  
+  // Delete old docs
+  oldSnap.docs.forEach(doc => batch.delete(doc.ref));
+  
+  // Create new docs
+  imported.forEach(e => {
+    const ref = firestore.collection('classEvents').doc();
+    batch.set(ref, { ...e, userId: req.userId, createdAt: new Date().toISOString() });
   });
+  
+  await batch.commit();
 
-  const events = await prisma.classEvent.findMany({
-    where: { userId: req.userId },
-    orderBy: [{ day: 'asc' }, { startMins: 'asc' }],
-  });
+  const events = await getUserEvents(req.userId);
   return ok(res, { importedCount: imported.length, rejectedCount: rejected.length, events });
 });
-

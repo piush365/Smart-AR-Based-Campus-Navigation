@@ -24,6 +24,20 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  async function handleGoogleLogin(e) {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      await loginWithGoogle();
+      navigate('/');
+    } catch (err) {
+      setError(err.message || 'Google login failed.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleEmailLogin(e) {
     e.preventDefault();
     setError('');
@@ -133,7 +147,8 @@ export default function Login() {
             {studentTab === 'google' ? (
               <button
                 id="login-google-btn"
-                onClick={loginWithGoogle}
+                onClick={handleGoogleLogin}
+                disabled={loading}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
                   gap: '12px', padding: '14px 20px', borderRadius: '12px',
