@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -32,7 +32,8 @@ const getErrorMessage = (err) => {
 };
 
 export default function Login() {
-  const { loginWithGoogle, loginWithEmail, loginAsVisitor } = useAuth();
+  // Added isAuthenticated here
+  const { loginWithGoogle, loginWithEmail, loginAsVisitor, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -53,6 +54,13 @@ export default function Login() {
 
   const clearError = () => setError('');
 
+  // Automatically navigate when authentication is confirmed
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate('/', { replace: true });
+    }
+  }, [isAuthenticated, navigate]);
+
   const handleRoleSwitch = (r) => {
     setRole(r);
     clearError();
@@ -64,11 +72,10 @@ export default function Login() {
     setLoading(true);
     try {
       await loginWithGoogle();
-      navigate('/');
+      // Removed manual navigation here
     } catch (err) {
       setError(getErrorMessage(err));
-    } finally {
-      setLoading(false);
+      setLoading(false); // Only set loading to false on error to prevent UI flashing
     }
   }
 
@@ -80,10 +87,9 @@ export default function Login() {
     setLoading(true);
     try {
       await loginWithEmail(email, password);
-      navigate('/');
+      // Removed manual navigation here
     } catch (err) {
       setError(getErrorMessage(err));
-    } finally {
       setLoading(false);
     }
   }
@@ -103,10 +109,9 @@ export default function Login() {
         phone: visitorPhone.trim(),
         purpose,
       });
-      navigate('/');
+      // Removed manual navigation here
     } catch (err) {
       setError(getErrorMessage(err));
-    } finally {
       setLoading(false);
     }
   }
