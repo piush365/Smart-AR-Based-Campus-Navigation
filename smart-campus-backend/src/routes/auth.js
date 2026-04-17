@@ -74,4 +74,31 @@ router.post('/logout', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Visitor: anonymous Firebase auth + store details in Firestore
+router.post('/visitor', async (req, res, next) => {
+  try {
+    const { uid, name, phone, purpose } = req.body;
+
+    if (!uid) return res.status(400).json({ error: 'uid is required.' });
+    if (!name?.trim()) return res.status(400).json({ error: 'Name is required.' });
+    if (!phone?.trim()) return res.status(400).json({ error: 'Phone number is required.' });
+    if (!purpose) return res.status(400).json({ error: 'Purpose of visit is required.' });
+
+    const visitorData = {
+      uid,
+      name: name.trim(),
+      phone: '+91' + phone.trim().replace(/^\+91/, ''),
+      purpose,
+      role: 'visitor',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Store in a separate 'visitors' collection
+    await firestore.collection('visitors').doc(uid).set(visitorData, { merge: true });
+
+    res.status(201).json({ user: visitorData });
+  } catch (err) { next(err); }
+});
+
 export default router;

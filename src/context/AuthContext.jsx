@@ -1,11 +1,12 @@
-import { createContext, useContext, useState, useEffect } from 'react';
-import { 
-  onAuthStateChanged, 
-  signInWithPopup, 
-  GoogleAuthProvider, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signOut 
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  GoogleAuthProvider,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signInAnonymously,
+  signOut,
 } from 'firebase/auth';
 import { auth } from '../firebase.js';
 import api from '../api.js';
@@ -17,28 +18,39 @@ export function AuthProvider({ children }) {
     try { return JSON.parse(localStorage.getItem('user')); } catch { return null; }
   });
   const [loading, setLoading] = useState(true);
+  const isRegistering = useRef(false);
 
-  // Sync state between Firebase Auth and our custom backend (/auth/me)
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       if (!firebaseUser) {
         setUser(null);
         localStorage.removeItem('user');
         setLoading(false);
-      } else {
-        try {
-          // If we log in via Google, we might not have a backend user yet.
-          // Calling /auth/me on the backend checks if doc exists. If not, creates one.
-          const { data } = await api.get('/auth/me');
-          setUser(data);
-          localStorage.setItem('user', JSON.stringify(data));
-        } catch (err) {
-          console.error("Failed to fetch user data", err);
-          // If the backend fails, sign out purely from client
-          setUser(null);
-        } finally {
-          setLoading(false);
-        }
+        return;
+      }
+
+      // Skip /auth/me during registration or anonymous visitor sign-in
+      if (isRegistering.current) {
+        setLoading(false);
+        return;
+      }
+
+      // Anonymous users are visitors — user state already set by loginAsVisitor
+      if (firebaseUser.isAnonymous) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const { data } = await api.get('/auth/me');
+        setUser(data);
+        localStorage.setItem('user', JSON.stringify(data));
+      } catch (err) {
+        console.error('Failed to fetch user data', err);
+        setUser(null);
+        localStorage.removeItem('user');
+      } finally {
+        setLoading(false);
       }
     });
     return unsub;
@@ -54,21 +66,56 @@ export function AuthProvider({ children }) {
   };
 
   const register = async (fields) => {
-    // 1. Create Firebase user
-    const cred = await createUserWithEmailAndPassword(auth, fields.email, fields.password);
-    // 2. We could update displayName here if we wanted in Firebase, but we just use our backend.
-    
-    // 3. Inform our backend to create the user with role details (we can do this safely since we are now authed as the user)
-    const { data } = await api.post('/auth/register', {
-      name: fields.name,
-      email: fields.email,
-      role: fields.role,
-      studentId: fields.studentId,
-      department: fields.department
-    });
-    
-    setUser(data.user);
-    return data.user;
+    isRegistering.current = true;
+    try {
+      await createUserWithEmailAndPassword(auth, fields.email, fields.password);
+      const { data } = await api.post('/auth/register', {
+        name: fields.name,
+        email: fields.email,
+        role: fields.role,
+        studentId: fields.studentId,
+        department: fields.department,
+      });
+      setUser(data.user);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      return data.user;
+    } catch (err) {
+      throw err;
+    } finally {
+      isRegistering.current = false;
+    }
+  };
+
+  // Anonymous sign-in for visitors — stores details in Firestore via backend
+  const loginAsVisitor = async ({ name, phone, purpose }) => {
+    isRegistering.current = true;
+    try {
+      const credential = await signInAnonymously(auth);
+      const uid = credential.user.uid;
+
+      const { data } = await api.post('/auth/visitor', {
+        uid,
+        name,
+        phone,
+        purpose,
+      });
+
+      const visitorUser = data.user || {
+        uid,
+        name,
+        phone,
+        purpose,
+        role: 'visitor',
+      };
+
+      setUser(visitorUser);
+      localStorage.setItem('user', JSON.stringify(visitorUser));
+      return visitorUser;
+    } catch (err) {
+      throw err;
+    } finally {
+      isRegistering.current = false;
+    }
   };
 
   const logout = async () => {
@@ -90,10 +137,11 @@ export function AuthProvider({ children }) {
       loading,
       isAuthenticated: !!user,
       isVisitor: user?.role === 'visitor',
-      isStudent: !user || user?.role === 'student',
+      isStudent: user?.role === 'student',
       loginWithGoogle,
       loginWithEmail,
       register,
+      loginAsVisitor,
       logout,
       updateProfile,
     }}>

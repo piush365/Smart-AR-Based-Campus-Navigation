@@ -9,7 +9,7 @@ export default defineConfig({
     basicSsl(), // generates a self-signed cert so camera works on LAN
   ],
   server: {
-    host: true,   // expose on LAN (0.0.0.0)
+    // host: true,   // expose on LAN (0.0.0.0)
     port: 5173,
     https: true,  // required for getUserMedia on non-localhost
   },
