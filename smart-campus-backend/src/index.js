@@ -5,12 +5,14 @@ import cors from 'cors';
 import authRouter from './routes/auth.js';
 import { scheduleRouter } from './routes/schedule.js';
 
+
 const app = express();
 const PORT = process.env.PORT || 8787;
 
 // ── CORS ──────────────────────────────────────────────────────────────────────────
 const allowedOrigins = [
   process.env.FRONTEND_URL || 'http://localhost:5173',
+  'https://complexional-syntypic-teresita.ngrok-free.dev',
 ];
 
 app.use(cors({
@@ -22,12 +24,15 @@ app.use(cors({
 }));
 
 // ── Body parsing ──────────────────────────────────────────────────────────────────
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // ── Routes ────────────────────────────────────────────────────────────────────────
 app.use('/auth', authRouter);
 app.use('/schedule', scheduleRouter);
+
+import aiRouter from './routes/ai.js';
+app.use('/ai', aiRouter);
 
 // ── Health check ──────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
